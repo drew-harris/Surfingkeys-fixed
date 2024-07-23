@@ -13,6 +13,49 @@ import {
 import { RUNTIME, dispatchSKEvent, runtime } from './common/runtime.js';
 import createUiHost from './uiframe.js';
 
+export function waitForPageStability() {
+    return new Promise((resolve) => {
+        const dehydratedScript = document.querySelector('script#__TSR_DEHYDRATED__');
+        
+        if (!dehydratedScript) {
+            // If the script is not present, resolve immediately
+            resolve();
+            return;
+        }
+        //
+        // let stabilityCounter = 0;
+        // const maxStableCount = 5;
+        // const checkInterval = 50; // ms
+        //
+        // const observer = new MutationObserver(() => {
+        //     stabilityCounter = 0;
+        // });
+        //
+        // observer.observe(document.body, {
+        //     childList: true,
+        //     subtree: true,
+        //     attributes: true,
+        //     characterData: true
+        // });
+        //
+        // const intervalId = setInterval(() => {
+        //     stabilityCounter++;
+        //     if (stabilityCounter >= maxStableCount) {
+        //         clearInterval(intervalId);
+        //         observer.disconnect();
+        //         resolve();
+        //     }
+        // }, checkInterval);
+
+        // Fallback timeout
+        setTimeout(() => {
+            // clearInterval(intervalId);
+            // observer.disconnect();
+            resolve();
+        }, 2000); // 2 seconds max wait
+    });
+}
+
 function createFront(insert, normal, hints, visual, browser) {
     var self = {};
     // The agent is a front stub to talk with pages/frontend.html
@@ -33,10 +76,14 @@ function createFront(insert, normal, hints, visual, browser) {
 
     function newFrontEnd() {
         frontendPromise = new Promise(function (resolve, reject) {
-            createUiHost(browser, (res) => {
-                resolve(res);
-                applyUserSettings();
-            });
+            waitForPageStability().then(
+                () => {
+                    createUiHost(browser, (res) => {
+                        resolve(res);
+                        applyUserSettings();
+                    });
+                }
+            )
         });
     }
 
