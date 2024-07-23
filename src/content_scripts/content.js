@@ -8,6 +8,14 @@ import createHints from './common/hints.js';
 import createClipboard from './common/clipboard.js';
 import {
     applyUserSettings,
+    generateQuickGuid,
+    getRealEdit,
+    isInUIFrame,
+    showPopup,
+    generateQuickGuid,
+    getRealEdit,
+    isInUIFrame,
+    showPopup,
     createElementWithContent,
     generateQuickGuid,
     getBrowserName,
@@ -22,21 +30,24 @@ import {
 import createFront from './front.js';
 import createAPI from './common/api.js';
 import createDefaultMappings from './common/default.js';
-
 import KeyboardUtils from './common/keyboardUtils';
 
-/*
- * Apply custom key mappings for basic users, the input is like
- * {"a": "b", "b": "a", "c": "d"}
- */
+function runScript(api, snippets) {
+    var result = { settings: {}, error: "" };
+    try {
+        var F = new Function('settings', 'api', snippets);
+        F(result.settings, api);
+    } catch (e) {
+        result.error = e.toString();
+    }
+    return result;
+}
+
 function applyBasicMappings(api, normal, mappings) {
     const originKeys = new Set(Object.keys(mappings));
     const originMappings = {};
     for (const originKey in mappings) {
         const newKey = mappings[originKey];
-        // current new key is one original key that will be overrode later
-        // we need save it some where first, since current map will lose it,
-        // such as the `a` in above example.
         if (originKeys.has(newKey)) {
             const target = normal.mappings.find(newKey);
             if (target) {
@@ -125,6 +136,28 @@ function applySettings(api, normal, rs) {
             error = e.toString();
         }
         applyUserSettings({settings, error});
+        if (!isEmptyObject(delta.settings)) {
+            dispatchSKEvent('setUserSettings', JSON.parse(JSON.stringify(delta.settings)));
+            for (var k in delta.settings) {
+                if (runtime.conf.hasOwnProperty(k)) {
+                    runtime.conf[k] = delta.settings[k];
+                    delete delta.settings[k];
+                }
+            }
+            if (Object.keys(delta.settings).length > 0 && window === top) {
+                RUNTIME('updateSettings', {
+                    scope: "snippets",
+                    settings: delta.settings
+                });
+            }
+        }
+    }
+    if (runtime.conf.showProxyInStatusBar && 'proxyMode' in rs) {
+        var proxyMode = rs.proxyMode;
+        if (["byhost", "always"].indexOf(rs.proxyMode) !== -1) {
+            proxyMode = "{0}: {1}".format(rs.proxyMode, rs.proxy);
+        }
+        dispatchSKEvent('showStatus', [[undefined, undefined, undefined, proxyMode]]);
     }
 
     applyRuntimeConf(normal);
@@ -133,7 +166,44 @@ function applySettings(api, normal, rs) {
     }, {once: true});
 }
 
-function _initModules() {
+function waitForPageStability() {
+    return new Promise((resolve) => {
+        let stabilityCounter = 0;
+        const maxStableCount = 5;
+        const checkInterval = 50; // ms
+
+        const observer = new MutationObserver(() => {
+            stabilityCounter = 0;
+        });
+
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            characterData: true
+        });
+
+        const intervalId = setInterval(() => {
+            stabilityCounter++;
+            if (stabilityCounter >= maxStableCount) {
+                clearInterval(intervalId);
+                observer.disconnect();
+                resolve();
+            }
+        }, checkInterval);
+
+        // Fallback timeout
+        setTimeout(() => {
+            clearInterval(intervalId);
+            observer.disconnect();
+            resolve();
+        }, 2000); // 2 seconds max wait
+    });
+}
+
+async function _initModules() {
+    await waitForPageStability();
+
     const clipboard = createClipboard();
     const insert = createInsert();
     const normal = createNormal(insert);
@@ -165,8 +235,7 @@ function _initModules() {
     };
 }
 
-
-function _initContent(modes) {
+async function _initContent(modes) {
     window.frameId = generateQuickGuid();
     runtime.on('settingsUpdated', response => {
         var rs = response.settings;
@@ -180,20 +249,20 @@ function _initContent(modes) {
     }
 }
 
-window.getFrameId = function () {
+window.getFrameId = async function () {
     if (!window.frameId && window.innerWidth > 16 && window.innerHeight > 16
         && document.body && document.body.childElementCount > 0
         && runtime.conf.ignoredFrameHosts.indexOf(window.origin) === -1
         && (!window.frameElement || (parseInt("0" + getComputedStyle(window.frameElement).zIndex) >= 0
             && window.frameElement.offsetWidth > 16 && window.frameElement.offsetWidth > 16))
     ) {
-        _initContent(_initModules());
-
-        // Only used to load user script for iframes in MV3
         dispatchSKEvent('user', ["runUserScript"]);
+        const modes = await _initModules();
+        await _initContent(modes);
     }
     return window.frameId;
 };
+
 Mode.init(window === top ? undefined : ()=> {
     window.addEventListener("focus", () => {
         getFrameId();
@@ -201,38 +270,39 @@ Mode.init(window === top ? undefined : ()=> {
 });
 
 let _browser;
-function start(browser) {
+async function start(browser) {
     _browser = browser || {
         usePdfViewer: () => {},
         readText: () => {},
     };
     if (window === top) {
-        new Promise((r, j) => {
-            if (window.location.href === chrome.runtime.getURL("/pages/options.html")) {
-                import(/* webpackIgnore: true */ './pages/options.js').then((optionsLib) => {
-                    optionsLib.default(
-                        RUNTIME,
-                        KeyboardUtils,
-                        Mode,
-                        createElementWithContent,
-                        getBrowserName,
-                        htmlEncode,
-                        initL10n,
-                        reportIssue,
-                        setSanitizedContent,
-                        showBanner);
-                    r(_initModules());
-                });
+        try {
+            let modes;
+            if (window.location.href === chrome.extension.getURL("/pages/options.html")) {
+                const optionsLib = await import(/* webpackIgnore: true */ './pages/options.js');
+                optionsLib.default(
+                    RUNTIME,
+                    KeyboardUtils,
+                    Mode,
+                    createElementWithContent,
+                    getBrowserName,
+                    htmlEncode,
+                    initL10n,
+                    reportIssue,
+                    setSanitizedContent,
+                    showBanner);
+                modes = await _initModules();
             } else {
-                r(_initModules());
+                modes = await _initModules();
             }
-        }).then((modes) => {
-            _initContent(modes);
-            runtime.on('titleChanged', function() {
-                Mode.checkEventListener(() => {
+
+            await _initContent(modes);
+
+            runtime.on('titleChanged', async function() {
+                Mode.checkEventListener(async () => {
                     modes.front.detach();
-                    modes = _initModules();
-                    _initContent(modes);
+                    modes = await _initModules();
+                    await _initContent(modes);
                     modes.front.attach();
                 });
             });
@@ -277,7 +347,7 @@ function start(browser) {
                             originalTitle = document.title;
                             showTabIndexInTitle();
                         }
-                    }).observe(document.querySelector("title"), { childList: true });;
+                    }).observe(document.querySelector("title"), { childList: true });
 
                     showTabIndexInTitle();
 
@@ -290,10 +360,13 @@ function start(browser) {
                 }
             });
 
-        });
+        } catch (error) {
+            console.error("Error initializing Surfingkeys:", error);
+        }
     } else {
-        document.addEventListener("surfingkeys:iframeBoot", () => {
-            _initContent(_initModules());
+        document.addEventListener("surfingkeys:iframeBoot", async () => {
+            const modes = await _initModules();
+            await _initContent(modes);
         }, {once: true});
     }
 }
