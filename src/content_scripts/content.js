@@ -143,34 +143,42 @@ function applySettings(api, normal, rs) {
 
 function waitForPageStability() {
     return new Promise((resolve) => {
-        let stabilityCounter = 0;
-        const maxStableCount = 5;
-        const checkInterval = 50; // ms
-
-        const observer = new MutationObserver(() => {
-            stabilityCounter = 0;
-        });
-
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true,
-            attributes: true,
-            characterData: true
-        });
-
-        const intervalId = setInterval(() => {
-            stabilityCounter++;
-            if (stabilityCounter >= maxStableCount) {
-                clearInterval(intervalId);
-                observer.disconnect();
-                resolve();
-            }
-        }, checkInterval);
+        const dehydratedScript = document.querySelector('script#__TSR_DEHYDRATED__');
+        
+        if (!dehydratedScript) {
+            // If the script is not present, resolve immediately
+            resolve();
+            return;
+        }
+        //
+        // let stabilityCounter = 0;
+        // const maxStableCount = 5;
+        // const checkInterval = 50; // ms
+        //
+        // const observer = new MutationObserver(() => {
+        //     stabilityCounter = 0;
+        // });
+        //
+        // observer.observe(document.body, {
+        //     childList: true,
+        //     subtree: true,
+        //     attributes: true,
+        //     characterData: true
+        // });
+        //
+        // const intervalId = setInterval(() => {
+        //     stabilityCounter++;
+        //     if (stabilityCounter >= maxStableCount) {
+        //         clearInterval(intervalId);
+        //         observer.disconnect();
+        //         resolve();
+        //     }
+        // }, checkInterval);
 
         // Fallback timeout
         setTimeout(() => {
-            clearInterval(intervalId);
-            observer.disconnect();
+            // clearInterval(intervalId);
+            // observer.disconnect();
             resolve();
         }, 2000); // 2 seconds max wait
     });
